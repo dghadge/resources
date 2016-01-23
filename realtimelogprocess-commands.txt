@@ -1,0 +1,49 @@
+echo 'export AWS_DEFAULT_REGION=us-west-2' >> .bashrc
+$ aws kinesis create-stream --stream-name "GuruLogs" --shard-count 1
+$ aws kinesis describe-stream --stream-name "GuruLogs"
+
+TrustPolicy.json:
+
+{
+  "Statement": {
+    "Effect": "Allow",
+    "Principal": { "Service": "logs.us-west-2.amazonaws.com" },
+    "Action": "sts:AssumeRole"
+  }
+}
+
+aws iam create-role --role-name CWLtoKinesisRole --assume-role-policy-document file://~/TrustPolicy.json
+
+Permissions.json:
+
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "kinesis:PutRecord",
+      "Resource": "<stream ARN>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "<role ARN>"
+    }
+  ]
+}
+
+aws iam put-role-policy --role-name CWLtoKinesisRole --policy-name Permissions-Policy-For-CWL --policy-document file://~/Permissions.json
+
+aws logs put-subscription-filter \
+    --log-group-name "/var/log/syslog" \
+    --filter-name "GuruLogs" \
+    --filter-pattern "Invalid user" \
+    --destination-arn "<stream ARN>" \
+    --role-arn "<role ARN>"
+
+aws kinesis get-shard-iterator --stream-name GuruLogs --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON
+
+aws kinesis get-records --limit 10 --shard-iterator "AAAAAAAAAAFGU/kLvNggvndHq2UIFOw5PZc6F01s3e3afsSscRM70JSbjIefg2ub07nk1y6CDxYR1UoGHJNP4m4NFUetzfL+wev+e2P4djJg4L9wmXKvQYoE+rMUiFq+p4Cn3IgvqOb5dRA0yybNdRcdzvnC35KQANoHzzahKdRGb9v4scv+3vaq+f+OIK8zM5My8ID+g6rMo7UKWeI4+IWiK2OSh0uP"
+
+echo -n `cat result` | base64 -D | zcat > result.json
+
+cat result.json | json_pp
