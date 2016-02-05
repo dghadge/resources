@@ -1,0 +1,15 @@
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "kinesis:PutRecord",
+      "Resource": "<stream ARN>"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "<role ARN>"
+    }
+  ]
+}
+
