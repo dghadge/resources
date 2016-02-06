@@ -50,3 +50,5 @@ vi result-encoded.txt
 echo -n `cat result-encoded.txt` | base64 -D | zcat > result-unzipped.txt
 
 cat result-unzipped.txt | json_pp
+
+https://github.com/awslabs/cloudwatch-logs-subscription-consumer
