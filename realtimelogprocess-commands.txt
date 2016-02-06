@@ -34,16 +34,19 @@ Permissions.json:
 aws iam put-role-policy --role-name CWLtoKinesisRole --policy-name Permissions-Policy-For-CWL --policy-document file://~/Permissions.json
 
 aws logs put-subscription-filter \
-    --log-group-name "/var/log/syslog" \
+    --log-group-name "Syslog" \
     --filter-name "GuruLogs" \
     --filter-pattern "Invalid user" \
-    --destination-arn "<stream ARN>" \
-    --role-arn "<role ARN>"
+    --destination-arn "<stream ARN>" \ --role-arn "<role ARN>"
 
 aws kinesis get-shard-iterator --stream-name GuruLogs --shard-id shardId-000000000000 --shard-iterator-type TRIM_HORIZON
 
-aws kinesis get-records --limit 10 --shard-iterator "AAAAAAAAAAFGU/kLvNggvndHq2UIFOw5PZc6F01s3e3afsSscRM70JSbjIefg2ub07nk1y6CDxYR1UoGHJNP4m4NFUetzfL+wev+e2P4djJg4L9wmXKvQYoE+rMUiFq+p4Cn3IgvqOb5dRA0yybNdRcdzvnC35KQANoHzzahKdRGb9v4scv+3vaq+f+OIK8zM5My8ID+g6rMo7UKWeI4+IWiK2OSh0uP"
+aws kinesis get-records --limit 10 --shard-iterator "AAAAAAAAAAFGU/kLvNggvndHq2UIFOw5PZc6F01s3e3afsSscRM70JSbjIefg2ub07nk1y6CDxYR1UoGHJNP4m4NFUetzfL+wev+e2P4djJg4L9wmXKvQYoE+rMUiFq+p4Cn3IgvqOb5dRA0yybNdRcdzvnC35KQANoHzzahKdRGb9v4scv+3vaq+f+OIK8zM5My8ID+g6rMo7UKWeI4+IWiK2OSh0uP" > result.txt
 
-echo -n `cat result` | base64 -D | zcat > result.json
+less result.txt
 
-cat result.json | json_pp
+vi result-encoded.txt
+
+echo -n `cat result-encoded.txt` | base64 -D | zcat > result-unzipped.txt
+
+cat result-unzipped.txt | json_pp
