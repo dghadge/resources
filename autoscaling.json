@@ -1,0 +1,375 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+  "Description" : "Demo - WebSite with DB scaling with load",
+  "Parameters" : {
+  	"VPCtoDeploy" : {
+  		"Type" : "AWS::EC2::VPC::Id",
+  		"Description" : "VPC into which to deploy demo.."
+  	},
+  	"SubnetsToUse" : {
+  		"Type" : "List<AWS::EC2::Subnet::Id>",
+  		"Description" : "Subnets to deploy HA server into"
+  	},
+  	"NumberOfInstances" : {
+  		"Type" : "String",
+  		"Description" : "Desired Number of instances",
+  		"Default" : "2"
+  	},
+  	"KeyName" : {
+  		"Type" : "AWS::EC2::KeyPair::KeyName",
+  		"Description" : "SSH Key to use for autoscaling instances"
+  	}
+  },
+  "Mappings" : {
+		"I11AMIMap" : {
+			"us-east-1"				: {"NAT" : "ami-303b1458", "WS2012" : "ami-9a0558f0", "AMAZONLINUX" : "ami-60b6c60a"},
+      "us-west-2"				: {"NAT" : "ami-69ae8259", "WS2012" : "ami-83a5bce2", "AMAZONLINUX" : "ami-f0091d91"},
+      "us-west-1"				: {"NAT" : "ami-7da94839", "WS2012" : "ami-e7e78d87", "AMAZONLINUX" : "ami-d5ea86b5"},
+      "eu-west-1"				: {"NAT" : "ami-6975eb1e", "WS2012" : "ami-7943ec0a", "AMAZONLINUX" : "ami-bff32ccc"},
+	  	"eu-central-1"		: {"NAT" : "ami-46073a5b", "WS2012" : "ami-8a918ee6", "AMAZONLINUX" : "ami-bc5b48d0"},
+      "ap-southeast-1"	: {"NAT" : "ami-b49dace6", "WS2012" : "ami-5869ab3b", "AMAZONLINUX" : "ami-c9b572aa"},
+      "ap-southeast-2" 	: {"NAT" : "ami-e7ee9edd", "WS2012" : "ami-9b4f15f8", "AMAZONLINUX" : "ami-48d38c2b"},
+      "ap-northeast-1" 	: {"NAT" : "ami-03cf3903", "WS2012" : "ami-482a1b26", "AMAZONLINUX" : "ami-383c1956"},
+      "ap-northeast-2"	: {"NAT" : "ami-4118d72f", "WS2012" : "ami-a2a06ecc", "AMAZONLINUX" : "ami-249b554a"},
+      "sa-east-1"      	: {"NAT" : "ami-fbfa41e6", "WS2012" : "ami-6a981e06", "AMAZONLINUX" : "ami-6817af04"}
+		}
+	},
+  "Resources" : {
+    "sg" : {
+  		"Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable Http access from anywhere and SSH access from anywhere",
+        "VpcId"            : { "Ref" : "VPCtoDeploy" },
+        "SecurityGroupIngress" : [
+        	{ "IpProtocol" : "tcp","FromPort"   : "80","ToPort"     : "80","CidrIp"     : "0.0.0.0/0" },
+        	{ "IpProtocol" : "tcp","FromPort"   : "8000","ToPort"     : "8000","CidrIp"     : "0.0.0.0/0" },
+        	{ "IpProtocol" : "tcp","FromPort"   : "22","ToPort"     : "22","CidrIp"     : "0.0.0.0/0" }
+				] 
+      }
+  	},
+    "elasticloadbalancer" : {
+  		"Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+  		"Properties" : {
+  			"CrossZone" : "true",
+  			"Subnets" : {"Ref" : "SubnetsToUse"},
+  			"Scheme" : "internet-facing",
+  			"Listeners" : [
+  				{"LoadBalancerPort" : "80", "InstancePort" : "80", "Protocol" : "HTTP"}
+  			],
+  			"HealthCheck" : {
+  				  "Target" : "HTTP:80/healthcheck.html",
+            "HealthyThreshold" : "3",
+            "UnhealthyThreshold" : "3",
+            "Interval" : "5",
+            "Timeout" : "2"
+  			},
+  			"SecurityGroups" : [{"Ref" : "sg"}]
+  		}
+  	},
+    "autoscalingroup" : {
+  		"Type" : "AWS::AutoScaling::AutoScalingGroup",
+  		"Properties" : {
+  			"VPCZoneIdentifier" : {"Ref" : "SubnetsToUse"},
+  			"Cooldown" : "30",
+  			"DesiredCapacity" : {"Ref" : "NumberOfInstances"},
+  			"HealthCheckGracePeriod" : 60,
+  			"HealthCheckType" : "ELB",
+  			"LaunchConfigurationName" : {"Ref" : "launchconfiguration"},
+  			"LoadBalancerNames" : [{"Ref" : "elasticloadbalancer"}],
+  			"MaxSize" : 10,
+  			"MinSize" : 2,
+  			"Tags" : [ 
+  				{"Key" : "Name", "Value" : "Demo - Auto Scaling Instance", "PropagateAtLaunch" : "true"}
+  			]
+  		}
+  	},
+    "CPUAlarmHigh": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "1",
+        "Statistic": "Average",
+        "Threshold": "15",
+        "AlarmDescription": "Alarm if CPU too high or metric disappears indicating instance is down",
+        "Period": "60",
+        "AlarmActions": [ { "Ref": "ScaleUpPolicy" } ],
+        "Namespace": "AWS/EC2",
+        "Dimensions": [ {
+          "Name": "AutoScalingGroupName",
+          "Value": { "Ref": "autoscalingroup" }
+        } ],
+        "ComparisonOperator": "GreaterThanThreshold",
+        "MetricName": "CPUUtilization"
+      }
+    },
+    "CPUAlarmLow": {
+      "Type": "AWS::CloudWatch::Alarm",
+      "Properties": {
+        "EvaluationPeriods": "1",
+        "Statistic": "Average",
+        "Threshold": "3",
+        "AlarmDescription": "Alarm if CPU too high or metric disappears indicating instance is down",
+        "Period": "60",
+        "AlarmActions": [ { "Ref": "ScaleDownPolicy" } ],
+        "Namespace": "AWS/EC2",
+        "Dimensions": [ {
+          "Name": "AutoScalingGroupName",
+          "Value": { "Ref": "autoscalingroup" }
+        } ],
+        "ComparisonOperator": "LessThanThreshold",
+        "MetricName": "CPUUtilization"
+      }
+    }, 
+    "ScaleUpPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "autoscalingroup" },
+        "Cooldown" : "45",
+        "ScalingAdjustment" : "2"
+      }
+    },
+    "ScaleDownPolicy" : {
+      "Type" : "AWS::AutoScaling::ScalingPolicy",
+      "Properties" : {
+        "AdjustmentType" : "ChangeInCapacity",
+        "AutoScalingGroupName" : { "Ref" : "autoscalingroup" },
+        "Cooldown" : "15",
+        "ScalingAdjustment" : "-2"
+      }
+    },
+    "InstanceProfile": {
+    	"Type": "AWS::IAM::InstanceProfile",
+			"Properties": {
+      	"Path": "/",
+        "Roles": [ {
+        	"Ref": "InstanceRole"
+        }]
+      }
+    },
+    "InstanceRole" : {
+			"Type": "AWS::IAM::Role",
+			"Properties": {
+				"AssumeRolePolicyDocument": {
+					"Version" : "2012-10-17",
+          "Statement": [ {
+          	"Effect": "Allow",
+            "Principal": {
+            	"Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        },
+				"Path": "/",
+				"Policies": 
+					[
+					{
+            "PolicyName": "root",
+            "PolicyDocument": {
+              "Version" : "2012-10-17",
+              "Statement": 
+								[  
+
+
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudwatch:PutMetricData"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Sid": "QueryAndScan",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:*"
+            ],
+            "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeInstanceStatus"
+            ],
+            "Resource": "*"
+        },
+
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "*"
+        }
+
+								]
+            }
+          } 
+					]		
+			}
+		},
+    "launchconfiguration" : {
+  		"Type" : "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+            "Install" : [ "Install" ]
+          },
+
+          "Install" : {
+            "packages" : {
+              "yum" : {
+                "php55"          : []
+              }
+            },
+
+            "files" : {
+              "/var/www/html/aws.phar" : {
+                "source" : "https://github.com/aws/aws-sdk-php/releases/download/3.13.0/aws.phar"
+              },
+              "/var/www/html/healthcheck.html" : {
+                "content" : { "Fn::Join" : [ "", [
+                  "<html><head><title>ELB Health Check</title></head>\n",
+                  "<body><h1>HEALTHCHECK</h1></body></html>\n"
+                ]]},
+                "mode"  : "000600",
+                "owner" : "apache",
+                "group" : "apache"
+              },
+              "/var/www/html/index.php" : {
+                "content" : { "Fn::Join" : [ "", [
+                  "<html>\n",
+                  "  <head>\n",
+                  "    <title>AWS CloudFormation PHP Sample</title>\n",
+                  "    <meta http-equiv=\"Content-Type\" content=\"text/html; charset=ISO-8859-1\">\n",
+                  "  </head>\n",
+                  "  <body>\n",
+                  "    <h1>Welcome to the A Cloud Guru AutoScaling Example (c) Adrian Cantrill/Nick Triantafillou</h1>\n",
+                  "    <p/>\n",
+                  "    <?php\n",
+                  "      // Print out the current data and time\n",
+                  "      print \"The Current Date and Time is: <br/>\";\n",
+                  "      print date(\"g:i A l, F j Y.\");\n",
+                  "    ?>\n",
+                  "    <p/>\n",
+                  "    <?php\n",
+                  "      // Setup a handle for CURL\n",
+                  "      $curl_handle=curl_init();\n",
+                  "      curl_setopt($curl_handle,CURLOPT_CONNECTTIMEOUT,2);\n",
+                  "      curl_setopt($curl_handle,CURLOPT_RETURNTRANSFER,1);\n",
+                  "      // Get the hostname of the intance from the instance metadata\n",
+                  "      curl_setopt($curl_handle,CURLOPT_URL,'http://169.254.169.254/latest/meta-data/public-hostname');\n",
+                  "      $hostname = curl_exec($curl_handle);\n",
+                  "      if (empty($hostname))\n",
+                  "      {\n",
+                  "        print \"Sorry, for some reason, we got no hostname back <br />\";\n",
+                  "      }\n",
+                  "      else\n",
+                  "      {\n",
+                  "        print \"Server = \" . $hostname . \"<br />\";\n",
+                  "      }\n",
+                  "      // Get the instance-id of the intance from the instance metadata\n",
+                  "      curl_setopt($curl_handle,CURLOPT_URL,'http://169.254.169.254/latest/meta-data/instance-id');\n",
+                  "      $instanceid = curl_exec($curl_handle);\n",
+                  "      if (empty($instanceid))\n",
+                  "      {\n",
+                  "        print \"Sorry, for some reason, we got no instance id back <br />\";\n",
+                  "      }\n",
+                  "      else\n",
+                  "      {\n",
+                  "        print \"EC2 instance-id = \" . $instanceid . \"<br />\";\n",
+                  "      }\n",
+                  "    ?>\n",
+                  "    <h2>Database Dump</h2>\n",
+                  "    <p/>\n",
+                  "    <?php\n",
+                  "      require '/var/www/html/aws.phar';",
+                  "      use Aws\\DynamoDb\\DynamoDbClient;\n",
+                  "      $client = DynamoDbClient::factory(array('region' => 'us-east-1', 'version'=> 'latest'));\n",
+                  "$result = $client->scan(array ('TableName' => 'demo'));\n",
+                  "$values = array();\n",
+                  "foreach ($result['Items'] as $item) {\n",
+                  "array_push($values, $item['value']['S']);\n",
+                  "}\n",
+                  "rsort($values);\n",
+                  "echo '<table>';\n",
+                  "for ($i=0; $i< count($values); $i++)\n",
+                  "{\n",
+                  "echo '<tr>';\n",
+                  "echo \"<td>{$values[$i]}</td>\";\n",
+                  "echo '<tr>';\n",
+                  "}\n",
+                  "echo '<table>';\n",
+                  "    ?>\n",
+                  "  </body>\n",
+                  "</html>\n"
+                ]]},
+                "mode"  : "000600",
+                "owner" : "apache",
+                "group" : "apache"
+              },
+
+              "/etc/cfn/cfn-hup.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "[main]\n",
+                  "stack=", { "Ref" : "AWS::StackId" }, "\n",
+                  "region=", { "Ref" : "AWS::Region" }, "\n"
+                ]]},
+                "mode"    : "000400",
+                "owner"   : "root",
+                "group"   : "root"
+              },
+
+              "/etc/cfn/hooks.d/cfn-auto-reloader.conf" : {
+                "content": { "Fn::Join" : ["", [
+                  "[cfn-auto-reloader-hook]\n",
+                  "triggers=post.update\n",
+                  "path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init\n",
+                  "action=/opt/aws/bin/cfn-init -v ",
+                  "         --stack ", { "Ref" : "AWS::StackName" },
+                  "         --resource WebServerInstance ",
+                  "         --configsets Install ",
+                  "         --region ", { "Ref" : "AWS::Region" }, "\n",
+                  "runas=root\n"
+                ]]}
+              }
+            },
+
+            "services" : {
+              "sysvinit" : {  
+                "httpd"   : { "enabled" : "true", "ensureRunning" : "true" },
+                "cfn-hup" : { "enabled" : "true", "ensureRunning" : "true",
+                              "files" : ["/etc/cfn/cfn-hup.conf", "/etc/cfn/hooks.d/cfn-auto-reloader.conf"]}
+              }
+            }
+          }
+        }
+      },
+  		"Properties" : {
+  			"AssociatePublicIpAddress" : "true",
+  			"EbsOptimized" : "false",
+  			"ImageId" : { "Fn::FindInMap" : [ "I11AMIMap", { "Ref" : "AWS::Region"}, "AMAZONLINUX" ] },
+  			"InstanceType" : "m4.large",
+        "IamInstanceProfile": {"Ref": "InstanceProfile"},
+  			"InstanceMonitoring" : "true",
+  			"BlockDeviceMappings" : [ { "DeviceName" : "/dev/xvda","Ebs" : { "VolumeSize" : "50","VolumeType" : "gp2" } } ],
+  			"KeyName" : {"Ref" : "KeyName"},
+  			"SecurityGroups" : [{"Ref" : "sg"}],
+  			"UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+             "#!/bin/bash -xe\n",
+             "yum update -y aws-cfn-bootstrap\n",
+
+             "# Install the files and packages from the metadata\n",
+             "/opt/aws/bin/cfn-init -v ",
+             "         --stack ", { "Ref" : "AWS::StackName" },
+             "         --resource launchconfiguration ",
+             "         --configsets Install ",
+             "         --region ", { "Ref" : "AWS::Region" }, "\n"
+        ]]}}
+  		}
+  	}
+  }
+}
